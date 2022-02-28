@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set-Up
+        run: |
+          sudo apt-get update
+          sudo apt install -y cmake pkg-config libssl-dev git build-essential clang libclang-dev curl
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview
+          target: wasm32-unknown-unknown
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+
+      - name: Install additional cargo tools
+        run: |
+            cargo install cargo-binutils
+
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+    #      args: -- test-threads 1
+        env:
+          CARGO_INCREMENTAL: 0
+          RUSTFLAGS: "-C instrument-coverage"
+          LLVM_PROFILE_FILE: coverage.profraw
+          SKIP_WASM_BUILD: 1
+
+      - name: Prepare coverage data for upload
+        run: |
+            echo "**** git status *****"
+            git status
+
+            RAW_PROFILE_DATA=$(find -name coverage.profraw | xargs)
+            cargo profdata -- merge --sparse -o coverage.profdata $RAW_PROFILE_DATA
+
+            cargo cov -- export --instr-profile=coverage.profdata --format lcov target/debug/examples/formatjson5 >> coverage.lcov
+
+            echo "***** DEBUG *****"
+            cat coverage.lcov
+
+      - uses: codecov/codecov-action@v2
+        with:
+          files: coverage.lcov
+          fail_ci_if_error: true
+          verbose: true
